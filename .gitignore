@@ -1,0 +1,72 @@
+# ============================================================
+#  Salidas de compilación de .NET
+# ============================================================
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+*.binlog
+*.fileListAbsolute.txt
+
+# ============================================================
+#  Artefactos publicados
+#  El .csproj copia el ejecutable publicado a la raíz del proyecto
+#  y el visor genera su carpeta de datos de WebView2 junto a él.
+# ============================================================
+/MarkdownViewerCS.exe
+/MarkdownViewerCS.pdb
+*.exe.WebView2/
+publish/
+
+# ============================================================
+#  Binarios y símbolos de depuración
+# ============================================================
+*.exe
+*.pdb
+*.dll
+*.lib
+*.obj
+*.ilk
+*.exp
+*.log
+
+# ============================================================
+#  Datos locales de WebView2 / Edge
+# ============================================================
+*.WebView2/
+EBWebView/
+User Data/
+
+# ============================================================
+#  Visual Studio / VS Code / Rider
+# ============================================================
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# ============================================================
+#  Paquetes y temporales
+# ============================================================
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+$RECYCLE.BIN/
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
