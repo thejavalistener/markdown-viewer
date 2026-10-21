@@ -31,6 +31,9 @@ public partial class MainWindow : Window
     {
         await webView.EnsureCoreWebView2Async();
         webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+        // Zoom y tema se aplican al documento ya cargado (sin recargarlo),
+        // así responden al instante aunque se pulsen apenas se abre el archivo.
+        webView.CoreWebView2.NavigationCompleted += async (_, _) => await ApplyAppearanceAsync();
         string[] args = Environment.GetCommandLineArgs();
         if (args.Length > 1) OpenFile(args[1]);
         else ShowHome();
@@ -46,6 +49,7 @@ public partial class MainWindow : Window
         webView.Visibility = Visibility.Collapsed;
         homePanel.Visibility = Visibility.Visible;
         Render("");
+        homePanel.Focus();
     }
 
     void OpenFile(string path)
@@ -57,6 +61,19 @@ public partial class MainWindow : Window
         homePanel.Visibility = Visibility.Collapsed;
         webView.Visibility = Visibility.Visible;
         Render(markdown);
+    }
+
+    void FocusPage()
+    {
+        try
+        {
+            Focus();
+            webView.Focus();
+        }
+        catch (InvalidOperationException)
+        {
+            // La WebView todavía no está lista.
+        }
     }
 
     void OpenFile_Click(object sender, RoutedEventArgs e) => ShowOpenFileDialog();
@@ -73,39 +90,105 @@ public partial class MainWindow : Window
             Multiselect = false
         };
         if (dialog.ShowDialog(this) == true) OpenFile(dialog.FileName);
+        else RestoreFocus();
     }
 
-    void Render(string markdown)
+    void RestoreFocus()
     {
-        string article = Markdown.ToHtml(markdown, pipeline);
-        string theme = darkMode ? "dark" : "light";
-        string html = """
+        if (webView.Visibility == Visibility.Visible) FocusPage();
+        else homePanel.Focus();
+    }
+
+    string BuildHtml(string body) => """
 <!doctype html><html class="__THEME__" lang="es"><head><meta charset="utf-8"><style>
 :root{--size:__SIZE__px;--bg:#fff;--surface:#f6f8fa;--text:#24292f;--border:#d0d7de;--code:#afb8c133;--link:#0969da;color-scheme:light}
 :root.dark{--bg:#0d1117;--surface:#161b22;--text:#c9d1d9;--border:#30363d;--code:#6e768166;--link:#58a6ff;color-scheme:dark}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 main{max-width:960px;min-height:100vh;margin:auto;padding:24px;font-size:var(--size);line-height:1.6}
 h1,h2{border-bottom:1px solid var(--border);padding-bottom:.3em}a{color:var(--link)}code{padding:.15em .35em;background:var(--code);border-radius:4px}pre{padding:16px;overflow:auto;background:var(--surface);border-radius:8px}pre code{padding:0;background:none}blockquote{margin-left:0;padding-left:1em;border-left:4px solid var(--border)}table{border-collapse:collapse}th,td{padding:6px 13px;border:1px solid var(--border)}img{max-width:100%}
-</style></head><body><main><article>__ARTICLE__</article></main><script>
-document.addEventListener('keydown',e=>{let a=null;if(e.ctrlKey&&(e.key==='+'||e.key==='='))a='in';else if(e.ctrlKey&&e.key==='-')a='out';else if(e.ctrlKey&&e.key.toLowerCase()==='o')a='open';else if(e.key==='F5')a='reload';else if(e.key==='F6')a='theme';if(a){e.preventDefault();chrome.webview.postMessage(a)}});
-</script></body></html>
+</style></head><body><main><article>__BODY__</article></main></body></html>
 """;
-        html = html.Replace("__THEME__", theme).Replace("__SIZE__", fontSize.ToString()).Replace("__ARTICLE__", article);
+
+    void Render(string markdown)
+    {
+        // NavigateToString() codifica el HTML (HtmlEncode), así que el contenido se
+        // inyecta después de reemplazar un marcador que sobrevive a esa codificación
+        // ('<!--BODY-->' se volvería '&lt;!--BODY--&gt;').
+        string html = BuildHtml("__BODY__");
+        if (!html.Contains("__BODY__")) throw new InvalidOperationException("Falta el marcador del cuerpo del documento.");
+        string theme = darkMode ? "dark" : "light";
+        html = html.Replace("__THEME__", theme).Replace("__SIZE__", fontSize.ToString());
+        html = html.Replace("__BODY__", Markdown.ToHtml(markdown, pipeline));
         webView.CoreWebView2.NavigateToString(html);
+    }
+
+    /// <summary>
+    /// Los atajos se manejan en WPF para que funcionen apenas se abre el archivo,
+    /// sin depender del foco del documento dentro de WebView2.
+    /// </summary>
+    void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        bool handled = true;
+        if (e.Key == Key.O && Keyboard.Modifiers == ModifierKeys.Control) ShowOpenFileDialog();
+        else if (e.Key is Key.OemPlus or Key.Add && Keyboard.Modifiers == ModifierKeys.Control) ChangeFontSize(+2);
+        else if (e.Key is Key.OemMinus or Key.Subtract && Keyboard.Modifiers == ModifierKeys.Control) ChangeFontSize(-2);
+        else if (e.Key == Key.F6) ToggleTheme();
+        else if (e.Key == Key.F5) Reload();
+        else handled = false;
+
+        // Los atajos que maneja WPF no deben llegar a WebView2.
+        if (handled) e.Handled = true;
+    }
+
+    async void ChangeFontSize(int delta)
+    {
+        fontSize = Math.Clamp(fontSize + delta, MinFontSize, MaxFontSize);
+        await ApplyAppearanceAsync();
+    }
+
+    async void ToggleTheme()
+    {
+        darkMode = !darkMode;
+        await ApplyAppearanceAsync();
+    }
+
+    /// <summary>
+    /// Aplica zoom y tema al documento sin navegar de nuevo. Si la página todavía
+    /// no está cargada, no hace nada: Render() ya usa el tamaño y el tema actuales.
+    /// </summary>
+    async Task ApplyAppearanceAsync()
+    {
+        CoreWebView2? core = webView.CoreWebView2;
+        if (core is null) return;
+        try
+        {
+            await core.ExecuteScriptAsync(
+                "document.documentElement.classList.toggle('dark'," + (darkMode ? "true" : "false") + ");" +
+                "document.documentElement.style.setProperty('--size','" + fontSize + "px');");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or TimeoutException or AggregateException)
+        {
+            // La página aún no está lista; el próximo Render() usará los valores actuales.
+        }
+    }
+
+    void Reload()
+    {
+        if (currentFilePath is null) return;
+        OpenFile(currentFilePath);
     }
 
     void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         switch (e.TryGetWebMessageAsString())
         {
-            case "in": if (fontSize < MaxFontSize) fontSize += 2; break;
-            case "out": if (fontSize > MinFontSize) fontSize -= 2; break;
-            case "theme": darkMode = !darkMode; break;
-            case "reload": if (currentFilePath is not null) OpenFile(currentFilePath); return;
-            case "open": ShowOpenFileDialog(); return;
+            case "in": ChangeFontSize(+2); break;
+            case "out": ChangeFontSize(-2); break;
+            case "theme": ToggleTheme(); break;
+            case "reload": Reload(); break;
+            case "open": ShowOpenFileDialog(); break;
             default: return;
         }
-        Render(currentFilePath is null ? "" : ReadTextOrShowError(currentFilePath));
     }
 
     string ReadTextOrShowError(string path)

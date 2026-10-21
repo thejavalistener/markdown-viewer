@@ -4,6 +4,7 @@
  xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
  Title="Visor Markdown" Height="700" Width="900" Background="#0d1117"
  AllowDrop="True"
+ PreviewKeyDown="Window_PreviewKeyDown"
  PreviewDragEnter="Window_PreviewDragOver"
  PreviewDragOver="Window_PreviewDragOver"
  Drop="Window_Drop">
